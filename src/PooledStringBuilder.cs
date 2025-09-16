@@ -10,11 +10,9 @@ namespace Soenneker.Utils.PooledStringBuilders;
 /// </summary>
 public ref struct PooledStringBuilder
 {
-    private char[] _buffer;
+    private char[]? _buffer;
     private int _pos;
-#if DEBUG
     private bool _disposed;
-#endif
 
     private const int _defaultCapacity = 128;
 
@@ -23,9 +21,7 @@ public ref struct PooledStringBuilder
     {
         _buffer = ArrayPool<char>.Shared.Rent(capacity > 0 ? capacity : _defaultCapacity);
         _pos = 0;
-#if DEBUG
         _disposed = false;
-#endif
     }
 
     public int Length
@@ -37,20 +33,32 @@ public ref struct PooledStringBuilder
     public int Capacity
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _buffer.Length;
+        get
+        {
+            ThrowIfDisposed();
+            return _buffer!.Length;
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Clear() => _pos = 0;
+    public void Clear()
+    {
+        ThrowIfDisposed();
+        _pos = 0;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ReadOnlySpan<char> AsSpan() => _buffer.AsSpan(0, _pos);
+    public ReadOnlySpan<char> AsSpan()
+    {
+        ThrowIfDisposed();
+        return _buffer!.AsSpan(0, _pos);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void EnsureCapacity(int required)
     {
         ThrowIfDisposed();
-        if ((uint)required <= (uint)_buffer.Length) return;
+        if ((uint)required <= (uint)_buffer!.Length) return;
 
         // Round up to next power of two to keep rent/copy count low.
         int newSize = RoundUpPow2(required);
@@ -71,7 +79,7 @@ public ref struct PooledStringBuilder
 
         int newPos = _pos + length;
         EnsureCapacity(newPos);
-        Span<char> dest = _buffer.AsSpan(_pos, length);
+        Span<char> dest = _buffer!.AsSpan(_pos, length);
         _pos = newPos;
         return dest;
     }
@@ -81,7 +89,7 @@ public ref struct PooledStringBuilder
     {
         ThrowIfDisposed();
         int i = _pos;
-        if ((uint)i >= (uint)_buffer.Length)
+        if ((uint)i >= (uint)_buffer!.Length)
         {
             EnsureCapacity(i + 1);
             i = _pos;
@@ -162,36 +170,39 @@ public ref struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AppendSeparatorIfNotEmpty(char separator)
     {
-        if (_pos != 0) 
+        ThrowIfDisposed();
+        if (_pos != 0)
             Append(separator);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public override string ToString() => new(_buffer, 0, _pos);
+    public override string ToString()
+    {
+        ThrowIfDisposed();
+        return new string(_buffer!, 0, _pos);
+    }
 
     /// <summary>Returns the built string and releases the buffer to the pool.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string ToStringAndDispose(bool clear = false)
     {
-        var s = new string(_buffer, 0, _pos);
+        ThrowIfDisposed();
+        var s = new string(_buffer!, 0, _pos);
         Dispose(clear);
         return s;
     }
 
     public void Dispose(bool clear)
     {
-#if DEBUG
         if (_disposed) return;
         _disposed = true;
-#endif
-        char[]? buf = _buffer;
+
+        var buf = _buffer;
+        _buffer = null;
+        _pos = 0;
 
         if (buf is not null)
-        {
             ArrayPool<char>.Shared.Return(buf, clearArray: clear);
-            _buffer = null!;
-            _pos = 0;
-        }
     }
 
     public void Dispose() => Dispose(clear: false);
@@ -200,7 +211,7 @@ public ref struct PooledStringBuilder
     private static int RoundUpPow2(int v)
     {
         // clamp to positive
-        if (v <= 0) 
+        if (v <= 0)
             return _defaultCapacity;
 
         // next power-of-two (cap at Array.MaxLength-ish range)
@@ -219,11 +230,12 @@ public ref struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
     {
-#if DEBUG
-        if (_disposed) ThrowDisposed();
-#endif
+        // Catch both: disposed and default-constructed
+        if (_disposed || _buffer is null)
+            ThrowDisposed();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ThrowDisposed() => throw new ObjectDisposedException(nameof(PooledStringBuilder));
+    private static void ThrowDisposed() =>
+        throw new ObjectDisposedException(nameof(PooledStringBuilder));
 }
