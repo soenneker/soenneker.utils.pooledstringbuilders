@@ -24,6 +24,18 @@ public ref struct PooledStringBuilder
         _disposed = false;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void EnsureInitialized()
+    {
+        // If never constructed but not disposed, lazily initialize.
+        if (_buffer is null)
+        {
+            if (_disposed) ThrowDisposed();
+            _buffer = ArrayPool<char>.Shared.Rent(_defaultCapacity);
+            _pos = 0;
+        }
+    }
+
     public int Length
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -36,6 +48,7 @@ public ref struct PooledStringBuilder
         get
         {
             ThrowIfDisposed();
+            EnsureInitialized();
             return _buffer!.Length;
         }
     }
@@ -44,6 +57,7 @@ public ref struct PooledStringBuilder
     public void Clear()
     {
         ThrowIfDisposed();
+        EnsureInitialized();
         _pos = 0;
     }
 
@@ -51,6 +65,7 @@ public ref struct PooledStringBuilder
     public ReadOnlySpan<char> AsSpan()
     {
         ThrowIfDisposed();
+        EnsureInitialized();
         return _buffer!.AsSpan(0, _pos);
     }
 
@@ -58,9 +73,9 @@ public ref struct PooledStringBuilder
     public void EnsureCapacity(int required)
     {
         ThrowIfDisposed();
+        EnsureInitialized();
         if ((uint)required <= (uint)_buffer!.Length) return;
 
-        // Round up to next power of two to keep rent/copy count low.
         int newSize = RoundUpPow2(required);
         char[] newBuf = ArrayPool<char>.Shared.Rent(newSize);
         _buffer.AsSpan(0, _pos)
@@ -74,8 +89,7 @@ public ref struct PooledStringBuilder
     public Span<char> AppendSpan(int length)
     {
         ThrowIfDisposed();
-        if (length <= 0)
-            return Span<char>.Empty;
+        if (length <= 0) return Span<char>.Empty;
 
         int newPos = _pos + length;
         EnsureCapacity(newPos);
@@ -88,6 +102,7 @@ public ref struct PooledStringBuilder
     public void Append(char c)
     {
         ThrowIfDisposed();
+        EnsureInitialized();
         int i = _pos;
         if ((uint)i >= (uint)_buffer!.Length)
         {
@@ -103,8 +118,7 @@ public ref struct PooledStringBuilder
     public void Append(string? value)
     {
         ThrowIfDisposed();
-        if (string.IsNullOrEmpty(value))
-            return;
+        if (string.IsNullOrEmpty(value)) return;
 
         ReadOnlySpan<char> src = value.AsSpan();
         Span<char> dest = AppendSpan(src.Length);
@@ -143,7 +157,6 @@ public ref struct PooledStringBuilder
     public void Append<T>(T value, ReadOnlySpan<char> format = default, IFormatProvider? provider = null) where T : ISpanFormattable
     {
         ThrowIfDisposed();
-        // Worst-case length guess to reduce retries (32 covers most primitives; dates may need more).
         var hint = 32;
 
         while (true)
@@ -151,12 +164,10 @@ public ref struct PooledStringBuilder
             Span<char> span = AppendSpan(hint);
             if (value.TryFormat(span, out int written, format, provider))
             {
-                // Adjust back if our hint was larger than actually written
                 _pos -= (hint - written);
                 return;
             }
 
-            // Not enough; roll back and grow, then retry.
             _pos -= hint;
             hint <<= 1;
             EnsureCapacity(_pos + hint);
@@ -171,14 +182,14 @@ public ref struct PooledStringBuilder
     public void AppendSeparatorIfNotEmpty(char separator)
     {
         ThrowIfDisposed();
-        if (_pos != 0)
-            Append(separator);
+        if (_pos != 0) Append(separator);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override string ToString()
     {
         ThrowIfDisposed();
+        EnsureInitialized();
         return new string(_buffer!, 0, _pos);
     }
 
@@ -187,7 +198,8 @@ public ref struct PooledStringBuilder
     public string ToStringAndDispose(bool clear = false)
     {
         ThrowIfDisposed();
-        var s = new string(_buffer!, 0, _pos);
+        EnsureInitialized();
+        string s = new string(_buffer!, 0, _pos);
         Dispose(clear);
         return s;
     }
@@ -210,19 +222,15 @@ public ref struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int RoundUpPow2(int v)
     {
-        // clamp to positive
-        if (v <= 0)
-            return _defaultCapacity;
+        if (v <= 0) return _defaultCapacity;
 
-        // next power-of-two (cap at Array.MaxLength-ish range)
-        var x = (uint)(v - 1);
+        uint x = (uint)(v - 1);
         x |= x >> 1;
         x |= x >> 2;
         x |= x >> 4;
         x |= x >> 8;
         x |= x >> 16;
         x++;
-        // Avoid excessively huge rents; ArrayPool may throw if extreme.
         const int max = 0x3FFFFFE0; // approx Array.MaxLength for char[]
         return (int)Math.Min(x, max);
     }
@@ -230,9 +238,7 @@ public ref struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
     {
-        // Catch both: disposed and default-constructed
-        if (_disposed || _buffer is null)
-            ThrowDisposed();
+        if (_disposed) ThrowDisposed();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
