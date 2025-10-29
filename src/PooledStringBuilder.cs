@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
 
 namespace Soenneker.Utils.PooledStringBuilders;
@@ -30,7 +31,8 @@ public ref struct PooledStringBuilder
         // If never constructed but not disposed, lazily initialize.
         if (_buffer is null)
         {
-            if (_disposed) ThrowDisposed();
+            if (_disposed)
+                ThrowDisposed();
             _buffer = ArrayPool<char>.Shared.Rent(_defaultCapacity);
             _pos = 0;
         }
@@ -61,6 +63,7 @@ public ref struct PooledStringBuilder
         _pos = 0;
     }
 
+    [Pure]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<char> AsSpan()
     {
@@ -74,12 +77,12 @@ public ref struct PooledStringBuilder
     {
         ThrowIfDisposed();
         EnsureInitialized();
-        if ((uint)required <= (uint)_buffer!.Length) return;
+        if ((uint)required <= (uint)_buffer!.Length)
+            return;
 
         int newSize = RoundUpPow2(required);
         char[] newBuf = ArrayPool<char>.Shared.Rent(newSize);
-        _buffer.AsSpan(0, _pos)
-            .CopyTo(newBuf);
+        _buffer.AsSpan(0, _pos).CopyTo(newBuf);
         ArrayPool<char>.Shared.Return(_buffer, clearArray: false);
         _buffer = newBuf;
     }
@@ -89,7 +92,8 @@ public ref struct PooledStringBuilder
     public Span<char> AppendSpan(int length)
     {
         ThrowIfDisposed();
-        if (length <= 0) return Span<char>.Empty;
+        if (length <= 0)
+            return Span<char>.Empty;
 
         int newPos = _pos + length;
         EnsureCapacity(newPos);
@@ -118,7 +122,8 @@ public ref struct PooledStringBuilder
     public void Append(string? value)
     {
         ThrowIfDisposed();
-        if (string.IsNullOrEmpty(value)) return;
+        if (string.IsNullOrEmpty(value))
+            return;
 
         ReadOnlySpan<char> src = value.AsSpan();
         Span<char> dest = AppendSpan(src.Length);
@@ -129,7 +134,8 @@ public ref struct PooledStringBuilder
     public void Append(ReadOnlySpan<char> value)
     {
         ThrowIfDisposed();
-        if (value.Length == 0) return;
+        if (value.Length == 0)
+            return;
         value.CopyTo(AppendSpan(value.Length));
     }
 
@@ -182,7 +188,8 @@ public ref struct PooledStringBuilder
     public void AppendSeparatorIfNotEmpty(char separator)
     {
         ThrowIfDisposed();
-        if (_pos != 0) Append(separator);
+        if (_pos != 0)
+            Append(separator);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -199,17 +206,18 @@ public ref struct PooledStringBuilder
     {
         ThrowIfDisposed();
         EnsureInitialized();
-        string s = new string(_buffer!, 0, _pos);
+        var s = new string(_buffer!, 0, _pos);
         Dispose(clear);
         return s;
     }
 
     public void Dispose(bool clear)
     {
-        if (_disposed) return;
+        if (_disposed)
+            return;
         _disposed = true;
 
-        var buf = _buffer;
+        char[]? buf = _buffer;
         _buffer = null;
         _pos = 0;
 
@@ -222,9 +230,10 @@ public ref struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int RoundUpPow2(int v)
     {
-        if (v <= 0) return _defaultCapacity;
+        if (v <= 0)
+            return _defaultCapacity;
 
-        uint x = (uint)(v - 1);
+        var x = (uint)(v - 1);
         x |= x >> 1;
         x |= x >> 2;
         x |= x >> 4;
@@ -238,7 +247,8 @@ public ref struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
     {
-        if (_disposed) ThrowDisposed();
+        if (_disposed)
+            ThrowDisposed();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

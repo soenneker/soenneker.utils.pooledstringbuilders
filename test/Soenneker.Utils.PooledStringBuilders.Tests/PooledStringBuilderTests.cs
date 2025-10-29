@@ -28,7 +28,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.Append(' ');
         sb.Append("xyz");
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
 
         s.Should()
             .Be("ABC xyz");
@@ -43,7 +43,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.Append(" ");
         sb.Append("There".AsSpan());
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
 
         s.Should()
             .Be("Hi There");
@@ -54,11 +54,11 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
     {
         var sb = new PooledStringBuilder(2);
 
-        var dest = sb.AppendSpan(5);
+        Span<char> dest = sb.AppendSpan(5);
         "Hello".AsSpan()
             .CopyTo(dest);
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
         s.Should()
             .Be("Hello");
     }
@@ -72,7 +72,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.Append(' ');
         sb.Append(4567);
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
         s.Should()
             .Be("123 4567");
     }
@@ -85,7 +85,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         var dt = new DateTime(2024, 12, 25, 0, 0, 0, DateTimeKind.Utc);
         sb.Append(dt, "yyyy-MM-dd".AsSpan(), provider: null);
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
         s.Should()
             .Be("2024-12-25");
     }
@@ -101,7 +101,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.AppendSeparatorIfNotEmpty(',');
         sb.Append("third");
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
         s.Should()
             .Be("first,second,third");
     }
@@ -115,7 +115,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.AppendLine();
         sb.Append("row2");
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
         s.Should()
             .Be("row1\nrow2");
     }
@@ -164,7 +164,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         var sb = new PooledStringBuilder(4);
         sb.Append("done");
 
-        var s = sb.ToStringAndDispose();
+        string s = sb.ToStringAndDispose();
         s.Should()
             .Be("done");
 
