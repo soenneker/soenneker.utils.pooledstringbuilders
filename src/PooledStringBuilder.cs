@@ -82,7 +82,8 @@ public ref struct PooledStringBuilder
 
         int newSize = RoundUpPow2(required);
         char[] newBuf = ArrayPool<char>.Shared.Rent(newSize);
-        _buffer.AsSpan(0, _pos).CopyTo(newBuf);
+        _buffer.AsSpan(0, _pos)
+               .CopyTo(newBuf);
         ArrayPool<char>.Shared.Return(_buffer, clearArray: false);
         _buffer = newBuf;
     }
@@ -156,6 +157,25 @@ public ref struct PooledStringBuilder
         dest[0] = c1;
         dest[1] = c2;
         dest[2] = c3;
+    }
+
+    /// <summary>
+    /// Reduces the current length by the specified number of elements, effectively removing items from the end.
+    /// </summary>
+    /// <param name="count">The number of elements to remove from the end. Must be greater than zero and less than or equal to the current
+    /// length; if greater, the length is set to zero.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Shrink(int count)
+    {
+        ThrowIfDisposed();
+
+        if (count <= 0)
+            return;
+
+        if ((uint)count > (uint)_pos)
+            _pos = 0;
+        else
+            _pos -= count;
     }
 
     /// <summary>Append any value type implementing <see cref="ISpanFormattable"/> without allocations.</summary>
