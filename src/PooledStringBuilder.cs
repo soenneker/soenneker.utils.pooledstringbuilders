@@ -265,6 +265,64 @@ public ref struct PooledStringBuilder
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Insert(int index, char value)
+    {
+        ThrowIfDisposed();
+        EnsureInitialized();
+
+        if ((uint)index > (uint)_pos)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        int newPos = _pos + 1;
+        EnsureCapacity(newPos);
+
+        char[] buf = _buffer!;
+        int tail = _pos - index;
+
+        if (tail > 0)
+            buf.AsSpan(index, tail).CopyTo(buf.AsSpan(index + 1, tail));
+
+        buf[index] = value;
+        _pos = newPos;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Insert(int index, ReadOnlySpan<char> value)
+    {
+        ThrowIfDisposed();
+        EnsureInitialized();
+
+        if ((uint)index > (uint)_pos)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        if (value.Length == 0)
+            return;
+
+        int len = value.Length;
+        int newPos = _pos + len;
+        EnsureCapacity(newPos);
+
+        char[] buf = _buffer!;
+        int tail = _pos - index;
+
+        if (tail > 0)
+            buf.AsSpan(index, tail).CopyTo(buf.AsSpan(index + len, tail));
+
+        value.CopyTo(buf.AsSpan(index, len));
+        _pos = newPos;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Insert(int index, string? value)
+    {
+        ThrowIfDisposed();
+        if (string.IsNullOrEmpty(value))
+            return;
+
+        Insert(index, value.AsSpan());
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
     {
         if (_disposed)
