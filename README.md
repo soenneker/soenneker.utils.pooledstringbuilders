@@ -1,6 +1,7 @@
-﻿[![](https://img.shields.io/nuget/v/soenneker.utils.pooledstringbuilders.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.utils.pooledstringbuilders/)
+[![](https://img.shields.io/nuget/v/soenneker.utils.pooledstringbuilders.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.utils.pooledstringbuilders/)
 [![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.utils.pooledstringbuilders/publish-package.yml?style=for-the-badge)](https://github.com/soenneker/soenneker.utils.pooledstringbuilders/actions/workflows/publish-package.yml)
 [![](https://img.shields.io/nuget/dt/soenneker.utils.pooledstringbuilders.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.utils.pooledstringbuilders/)
+[![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.utils.pooledstringbuilders/codeql.yml?label=CodeQL&style=for-the-badge)](https://github.com/soenneker/soenneker.utils.pooledstringbuilders/actions/workflows/codeql.yml)
 
 # ![](https://user-images.githubusercontent.com/4441470/224455560-91ed3ee7-f510-4041-a8d2-3fc093025112.png) Soenneker.Utils.PooledStringBuilders
 
@@ -34,7 +35,7 @@ string s = sb.ToString(); // returns string + returns buffer
 * `new PooledStringBuilder(int capacity = 128)`
 * `Append(char)`, `Append(string?)`, `Append(ReadOnlySpan<char>)`
 * `Append<T>(T value, ReadOnlySpan<char> fmt = default, IFormatProvider? prov = null)` where `T : ISpanFormattable`
-* `AppendSpan(int length)` → write directly into the buffer
+* `AppendSpan(int length)` ? write directly into the buffer
 * `AppendLine()`, `AppendSeparatorIfNotEmpty(char)`
 * `Length`, `Capacity`, `Clear()`
 * `ToString()` (keep using; you must `Dispose()` later)
@@ -43,7 +44,7 @@ string s = sb.ToString(); // returns string + returns buffer
 
 ## Notes
 
-* **`ref struct`** → stack-only. Don’t capture, box, store in fields, or cross `await`.
+* **`ref struct`** ? stack-only. Don�t capture, box, store in fields, or cross `await`.
 * **Dispose when done.** `using` should be used, or there is `ToStringAndDispose()`. Don't use both.
 * **Handling secrets?** Use `ToStringAndDispose(clear: true)` to zero the array before returning to the pool.
 * Not thread-safe. Keep it short-lived and single-scope.
