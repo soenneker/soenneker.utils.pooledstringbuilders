@@ -27,7 +27,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\src\Soenneker.Utils.PooledStringBuilders.csproj" />
+        <ProjectReference Include="..\..\src\Soenneker.Utils.PooledStringBuilders\Soenneker.Utils.PooledStringBuilders.csproj" />
     </ItemGroup>
 
     <ItemGroup>
