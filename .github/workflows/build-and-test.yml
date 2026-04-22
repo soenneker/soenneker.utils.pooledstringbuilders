@@ -38,7 +38,7 @@ jobs:
         run: dotnet build test/Soenneker.Utils.PooledStringBuilders.Tests/Soenneker.Utils.PooledStringBuilders.Tests.csproj --configuration Release --no-restore --verbosity minimal
 
       - name: Test
-        run: dotnet test test/Soenneker.Utils.PooledStringBuilders.Tests/Soenneker.Utils.PooledStringBuilders.Tests.csproj --configuration Release --no-build --no-restore --verbosity minimal
+        run: dotnet test --project test/Soenneker.Utils.PooledStringBuilders.Tests/Soenneker.Utils.PooledStringBuilders.Tests.csproj --configuration Release --no-build --no-restore --verbosity minimal
 
       - name: Restore library
         run: dotnet restore src/Soenneker.Utils.PooledStringBuilders/Soenneker.Utils.PooledStringBuilders.csproj --verbosity minimal
