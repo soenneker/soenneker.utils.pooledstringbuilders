@@ -1,24 +1,23 @@
-﻿using AwesomeAssertions;
-using Soenneker.Tests.FixturedUnit;
+using AwesomeAssertions;
+using Soenneker.Tests.HostedUnit;
 using System;
-using Xunit;
 
 namespace Soenneker.Utils.PooledStringBuilders.Tests;
 
-[Collection("Collection")]
-public sealed class PooledStringBuilderTests : FixturedUnitTest
+[ClassDataSource<Host>(Shared = SharedType.PerTestSession)]
+public sealed class PooledStringBuilderTests : HostedUnitTest
 {
-    public PooledStringBuilderTests(Fixture fixture, ITestOutputHelper output) : base(fixture, output)
+    public PooledStringBuilderTests(Host host) : base(host)
     {
     }
 
-    [Fact]
+    [Test]
     public void Default()
     {
     }
 
 
-    [Fact]
+    [Test]
     public void Append_Chars_And_String_Should_Produce_Expected_Text()
     {
         var sb = new PooledStringBuilder(8);
@@ -34,7 +33,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("ABC xyz");
     }
 
-    [Fact]
+    [Test]
     public void Append_Span_Should_Copy_Data()
     {
         var sb = new PooledStringBuilder(4);
@@ -49,7 +48,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("Hi There");
     }
 
-    [Fact]
+    [Test]
     public void AppendSpan_Allows_Direct_Writes()
     {
         var sb = new PooledStringBuilder(2);
@@ -63,7 +62,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("Hello");
     }
 
-    [Fact]
+    [Test]
     public void Append_Generic_ISpanFormattable_Int_Should_Use_No_Intermediates()
     {
         var sb = new PooledStringBuilder(4);
@@ -77,7 +76,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("123 4567");
     }
 
-    [Fact]
+    [Test]
     public void Append_Generic_With_FormatProvider_Should_Format_Date()
     {
         var sb = new PooledStringBuilder(16);
@@ -90,7 +89,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("2024-12-25");
     }
 
-    [Fact]
+    [Test]
     public void AppendSeparatorIfNotEmpty_Works_As_Delimiter()
     {
         var sb = new PooledStringBuilder(8);
@@ -106,7 +105,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("first,second,third");
     }
 
-    [Fact]
+    [Test]
     public void AppendLine_Appends_Newline()
     {
         var sb = new PooledStringBuilder(8);
@@ -120,7 +119,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
             .Be("row1\nrow2");
     }
 
-    [Fact]
+    [Test]
     public void EnsureCapacity_Grows_And_Capacity_Remains_PowerOfTwo()
     {
         var sb = new PooledStringBuilder(4);
@@ -141,7 +140,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.Dispose();
     }
 
-    [Fact]
+    [Test]
     public void Clear_Resets_Length_But_Not_Capacity()
     {
         var sb = new PooledStringBuilder(8);
@@ -158,7 +157,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.Dispose();
     }
 
-    [Fact]
+    [Test]
     public void ToStringAndDispose_Returns_String_And_Releases_Buffer()
     {
         var sb = new PooledStringBuilder(4);
@@ -172,7 +171,7 @@ public sealed class PooledStringBuilderTests : FixturedUnitTest
         sb.Dispose();
     }
 
-    [Fact]
+    [Test]
     public void Append_Null_Or_Empty_String_Should_Be_NoOp()
     {
         var sb = new PooledStringBuilder(8);
