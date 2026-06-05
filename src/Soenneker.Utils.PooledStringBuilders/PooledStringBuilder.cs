@@ -5,6 +5,9 @@ using System.Runtime.CompilerServices;
 
 namespace Soenneker.Utils.PooledStringBuilders;
 
+/// <summary>
+/// Represents the pooled string builder structure.
+/// </summary>
 public ref partial struct PooledStringBuilder
 {
     // Sentinel: if _buffer == DisposedSentinel => disposed
@@ -16,10 +19,6 @@ public ref partial struct PooledStringBuilder
 
     private const int _defaultCapacity = 128;
 
-    /// <summary>
-    /// Initializes a new pooled string builder with the specified initial capacity.
-    /// </summary>
-    /// <param name="capacity">The initial capacity. If less than or equal to zero, uses the default capacity of 128.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PooledStringBuilder(int capacity = _defaultCapacity)
     {

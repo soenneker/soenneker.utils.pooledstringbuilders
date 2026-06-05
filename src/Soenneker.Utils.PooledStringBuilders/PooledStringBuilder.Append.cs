@@ -4,6 +4,9 @@ using System.Runtime.CompilerServices;
 
 namespace Soenneker.Utils.PooledStringBuilders;
 
+/// <summary>
+/// Represents the pooled string builder structure.
+/// </summary>
 public ref partial struct PooledStringBuilder
 {
     // Conservative max lengths for numeric types (no separators)
