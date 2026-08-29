@@ -8,7 +8,7 @@
 **Tiny, fast `ref struct` string builder.**
 Backed by `ArrayPool<char>`. Low allocations. Short-lived use.
 
-## Install
+## Installation
 
 ```bash
 dotnet add package Soenneker.Utils.PooledStringBuilders
@@ -35,7 +35,7 @@ string s = sb.ToString(); // returns string + returns buffer
 * `new PooledStringBuilder(int capacity = 128)`
 * `Append(char)`, `Append(string?)`, `Append(ReadOnlySpan<char>)`
 * `Append<T>(T value, ReadOnlySpan<char> fmt = default, IFormatProvider? prov = null)` where `T : ISpanFormattable`
-* `AppendSpan(int length)` ? write directly into the buffer
+* `AppendSpan(int length)` - write directly into the buffer
 * `AppendLine()`, `AppendSeparatorIfNotEmpty(char)`
 * `Length`, `Capacity`, `Clear()`
 * `ToString()` (keep using; you must `Dispose()` later)
@@ -44,7 +44,7 @@ string s = sb.ToString(); // returns string + returns buffer
 
 ## Notes
 
-* **`ref struct`** ? stack-only. Don’t capture, box, store in fields, or cross `await`.
+* **`ref struct`** - stack-only. Don't capture, box, store in fields, or cross `await`.
 * **Dispose when done.** `using` should be used, or there is `ToStringAndDispose()`. Don't use both.
 * **Handling secrets?** Use `ToStringAndDispose(clear: true)` to zero the array before returning to the pool.
 * Not thread-safe. Keep it short-lived and single-scope.
