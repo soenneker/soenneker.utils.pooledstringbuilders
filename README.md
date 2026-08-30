@@ -27,24 +27,39 @@ sb.Append(' ');
 sb.Append(id);        // ISpanFormattable path, no boxing
 sb.AppendLine();
 
-string s = sb.ToString(); // returns string + returns buffer
+string s = sb.ToString(); // creates a string; using returns the buffer afterward
+```
+
+Use `ToString()` when the builder remains in scope and will be disposed separately. For a one-shot
+finish without a `using` declaration:
+
+```csharp
+var sb = new PooledStringBuilder();
+sb.Append("value=");
+sb.Append(value);
+
+string result = sb.ToStringAndDispose();
 ```
 
 ## Cheatsheet
 
-* `new PooledStringBuilder(int capacity = 128)`
-* `Append(char)`, `Append(string?)`, `Append(ReadOnlySpan<char>)`
-* `Append<T>(T value, ReadOnlySpan<char> fmt = default, IFormatProvider? prov = null)` where `T : ISpanFormattable`
-* `AppendSpan(int length)` - write directly into the buffer
-* `AppendLine()`, `AppendSeparatorIfNotEmpty(char)`
-* `Length`, `Capacity`, `Clear()`
-* `ToString()` (keep using; you must `Dispose()` later)
-* `ToStringAndDispose(bool clear = false)` (one-shot finish)
-* `Dispose()` / `Dispose(bool clear)`
+- `new PooledStringBuilder(int capacity = 128)`
+- `Append(char)`, `Append(string?)`, `Append(ReadOnlySpan<char>)`
+- `Append<T>(T value, ReadOnlySpan<char> format = default, IFormatProvider? provider = null)` where `T : ISpanFormattable`
+- `AppendSpan(int length)` — reserve and write directly into the buffer
+- `Insert(...)`, `Shrink(int)`, `AppendLine(...)`, `AppendSeparatorIfNotEmpty(char)`
+- `Length`, `Capacity`, `AsSpan()`, `EnsureCapacity(int)`, `Clear()`
+- `ToString()` — create a string without disposing the builder
+- `ToStringAndDispose(bool clear = false)` — create a string and return the buffer
+- `Dispose()` / `Dispose(bool clear)`
 
 ## Notes
 
-* **`ref struct`** - stack-only. Don't capture, box, store in fields, or cross `await`.
-* **Dispose when done.** `using` should be used, or there is `ToStringAndDispose()`. Don't use both.
-* **Handling secrets?** Use `ToStringAndDispose(clear: true)` to zero the array before returning to the pool.
-* Not thread-safe. Keep it short-lived and single-scope.
+- `PooledStringBuilder` is a stack-only `ref struct`; it cannot be boxed, captured, stored in a normal field, or kept across `await`.
+- Do not copy the builder (`var copy = builder`). Copies refer to the same rented array and can return it to the pool more than once. Pass it by `ref` when a helper must mutate the same builder.
+- Dispose exactly once, either through `using`, `Dispose`, or `ToStringAndDispose`. Do not use `ToStringAndDispose` and then dispose a copied or aliased value.
+- `AppendSpan(length)` immediately increases `Length` and returns uninitialized pooled storage. Fill the entire span before reading or converting the builder, or previous pool contents could appear in the result.
+- `AsSpan()` is valid only until the builder grows, changes, or is disposed. Do not retain it.
+- `AppendLine` appends `\n`, not `Environment.NewLine`.
+- `Clear()` resets the logical length but does not zero the array. Use `Dispose(clear: true)` or `ToStringAndDispose(clear: true)` when the pooled buffer contained secrets. The returned managed string is still immutable and cannot be securely erased.
+- The builder is not thread-safe. Keep it short-lived and confined to one synchronous scope.
