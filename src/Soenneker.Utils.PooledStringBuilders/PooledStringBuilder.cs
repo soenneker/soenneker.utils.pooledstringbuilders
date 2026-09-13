@@ -6,26 +6,41 @@ using System.Runtime.CompilerServices;
 namespace Soenneker.Utils.PooledStringBuilders;
 
 /// <summary>
-/// Represents the pooled string builder structure.
+/// A stack-only string builder backed by caller-provided storage or a pooled array.
 /// </summary>
 public ref partial struct PooledStringBuilder
 {
-    // Sentinel: if _buffer == DisposedSentinel => disposed
+    // Disposed builders have an empty span, zero length, and this sentinel as their owner.
     private static readonly char[] _disposedSentinel = Array.Empty<char>();
-    private static readonly ArrayPool<char> _pool = ArrayPool<char>.Shared;
-
-    private char[]? _buffer; // null => default(ref struct) never initialized
+    private Span<char> _chars;
+    private char[]? _buffer; // null for default builders and caller-provided storage
     private int _pos;
 
     private const int _defaultCapacity = 128;
 
+    /// <summary>Creates a builder with a rented buffer of at least the requested capacity.</summary>
+    /// <param name="capacity">The initial capacity. Nonpositive values use 128 characters.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PooledStringBuilder(int capacity = _defaultCapacity)
     {
         if (capacity <= 0)
             capacity = _defaultCapacity;
 
-        _buffer = _pool.Rent(capacity);
+        _buffer = ArrayPool<char>.Shared.Rent(capacity);
+        _chars = _buffer;
+        _pos = 0;
+    }
+
+    /// <summary>
+    /// Creates an empty builder using caller-provided storage. Rents an array only when this storage is outgrown.
+    /// </summary>
+    /// <param name="initialBuffer">Storage that must remain valid for the lifetime of the builder.</param>
+    /// <remarks>Existing characters are not part of the contents. The caller retains ownership of the storage.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public PooledStringBuilder(Span<char> initialBuffer)
+    {
+        _chars = initialBuffer;
+        _buffer = null;
         _pos = 0;
     }
 
@@ -44,7 +59,12 @@ public ref partial struct PooledStringBuilder
     public int Capacity
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => GetBufferOrInit().Length;
+        get
+        {
+            if (_chars.IsEmpty)
+                Grow(_defaultCapacity);
+            return _chars.Length;
+        }
     }
 
     /// <summary>
@@ -65,19 +85,22 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<char> AsSpan()
     {
-        char[] buf = GetBufferOrInit();
-        return buf.AsSpan(0, _pos);
+        ThrowIfDisposed();
+        return _chars.Slice(0, _pos);
     }
 
     /// <summary>
     /// Ensures the builder has at least the specified capacity.
     /// </summary>
     /// <param name="required">The minimum required capacity.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The required capacity is negative.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void EnsureCapacity(int required)
     {
-        char[] buf = GetBufferOrInit();
-        EnsureCapacityCore(buf, required);
+        ThrowIfDisposed();
+        ArgumentOutOfRangeException.ThrowIfNegative(required);
+        if (required > _chars.Length || _chars.IsEmpty)
+            Grow(required);
     }
 
     /// <summary>
@@ -102,45 +125,43 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public override string ToString()
     {
-        char[] buf = GetBufferOrInit();
-        return new string(buf, 0, _pos);
+        if (_pos == 0)
+        {
+            ThrowIfDisposed();
+            return string.Empty;
+        }
+
+        return new string(_chars.Slice(0, _pos));
     }
 
     /// <summary>
     /// Returns the current contents as a string and returns the buffer to the pool.
     /// </summary>
-    /// <param name="clear">If true, clears the buffer before returning it to the pool.</param>
+    /// <param name="clear">If true, clears the current storage, including caller-provided memory, before releasing it.</param>
     /// <returns>A new string containing the builder's characters.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string ToStringAndDispose(bool clear = false)
     {
-        char[] buf = GetBufferOrInit();
-
-        string s = new(buf, 0, _pos);
+        string s = ToString();
         Dispose(clear);
         return s;
     }
 
     /// <summary>
-    /// Returns the buffer to the pool. Call this when finished to avoid leaking pooled memory.
+    /// Releases the current storage and returns a rented buffer to the pool. Caller-provided storage is never returned to the pool.
     /// </summary>
-    /// <param name="clear">If true, clears the buffer before returning it to the pool.</param>
+    /// <param name="clear">If true, clears the current storage, including caller-provided memory, before releasing it.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Dispose(bool clear)
     {
         char[]? buf = _buffer;
-
-        if (buf is null || ReferenceEquals(buf, _disposedSentinel))
-        {
-            _buffer = _disposedSentinel;
-            _pos = 0;
-            return;
-        }
-
+        if (clear)
+            _chars.Clear();
+        _chars = default;
         _buffer = _disposedSentinel;
         _pos = 0;
-
-        _pool.Return(buf, clearArray: clear);
+        if (buf is not null && !ReferenceEquals(buf, _disposedSentinel))
+            ArrayPool<char>.Shared.Return(buf);
     }
 
     /// <summary>
@@ -158,24 +179,23 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Insert(int index, char value)
     {
-        char[] buf = GetBufferOrInit();
+        ThrowIfDisposed();
 
         if ((uint)index > (uint)_pos)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        int newPos = _pos + 1;
-        if ((uint)newPos > (uint)buf.Length)
+        if (_pos == _chars.Length)
         {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
+            GrowAndInsert(index, new ReadOnlySpan<char>(in value));
+            return;
         }
 
         int tail = _pos - index;
         if (tail > 0)
-            buf.AsSpan(index, tail).CopyTo(buf.AsSpan(index + 1, tail));
+            _chars.Slice(index, tail).CopyTo(_chars.Slice(index + 1, tail));
 
-        buf[index] = value;
-        _pos = newPos;
+        _chars[index] = value;
+        _pos++;
     }
 
     /// <summary>
@@ -185,9 +205,9 @@ public ref partial struct PooledStringBuilder
     /// <param name="value">The span of characters to insert.</param>
     /// <exception cref="ArgumentOutOfRangeException">index is less than 0 or greater than Length.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Insert(int index, ReadOnlySpan<char> value)
+    public void Insert(int index, scoped ReadOnlySpan<char> value)
     {
-        char[] buf = GetBufferOrInit();
+        ThrowIfDisposed();
 
         if ((uint)index > (uint)_pos)
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -196,19 +216,19 @@ public ref partial struct PooledStringBuilder
         if (len == 0)
             return;
 
-        int newPos = _pos + len;
-        if ((uint)newPos > (uint)buf.Length)
+        if (len > _chars.Length - _pos)
         {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
+            GrowAndInsert(index, value);
+            return;
         }
 
-        int tail = _pos - index;
-        if (tail > 0)
-            buf.AsSpan(index, tail).CopyTo(buf.AsSpan(index + len, tail));
+        if (value.Overlaps(_chars))
+        {
+            InsertOverlapping(index, value);
+            return;
+        }
 
-        value.CopyTo(buf.AsSpan(index));
-        _pos = newPos;
+        InsertCore(index, value);
     }
 
     /// <summary>
@@ -225,70 +245,67 @@ public ref partial struct PooledStringBuilder
             return;
         }
 
-        Insert(index, value.AsSpan());
+        ThrowIfDisposed();
+        if ((uint)index > (uint)_pos)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        if (value.Length > _chars.Length - _pos)
+            GrowAndInsert(index, value.AsSpan());
+        else
+            InsertCore(index, value.AsSpan());
     }
 
     // --------- internals ---------
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private char[] GetBufferOrInit()
+    private void Initialize(int required)
     {
-        char[]? buf = _buffer;
-
-        if (buf is null)
-        {
-            _buffer = buf = _pool.Rent(_defaultCapacity);
-            _pos = 0;
-            return buf;
-        }
-
-        if (ReferenceEquals(buf, _disposedSentinel))
-            ThrowDisposed();
-
-        return buf;
+        _buffer = RentBuffer(required, _chars.Length, _buffer);
+        _chars = _buffer;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void EnsureCapacityCore(char[] current, int required)
+    private static char[] RentBuffer(int required, int capacity, char[]? previous)
     {
-        if ((uint)required <= (uint)current.Length)
-            return;
+        if (capacity == 0 && ReferenceEquals(previous, _disposedSentinel))
+            ThrowDisposed();
+        if ((uint)required > Array.MaxLength)
+            throw new OutOfMemoryException();
 
-        int newSize = RoundUpPow2(required);
-        char[] newBuf = _pool.Rent(newSize);
+        return ArrayPool<char>.Shared.Rent(capacity == 0 ? Math.Max(_defaultCapacity, required) : required);
+    }
 
-        current.AsSpan(0, _pos).CopyTo(newBuf);
-        _pool.Return(current, clearArray: false);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ReplaceBuffer(char[] buffer)
+    {
+        char[]? previous = _buffer;
+        _buffer = buffer;
+        _chars = buffer;
+        if (previous is not null)
+            ArrayPool<char>.Shared.Return(previous);
+    }
 
-        _buffer = newBuf;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void Grow(int required)
+    {
+        char[] buffer = GrowCore(_chars.Slice(0, _pos), required, _chars.Length, _buffer);
+        ReplaceBuffer(buffer);
+    }
+
+    // Passing the contents by value lets the JIT keep the builder's fields in registers.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static char[] GrowCore(ReadOnlySpan<char> contents, int required, int capacity, char[]? previous)
+    {
+        char[] buffer = RentBuffer(required, capacity, previous);
+        contents.CopyTo(buffer);
+        return buffer;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
     {
-        if (ReferenceEquals(_buffer, _disposedSentinel))
+        if (_chars.IsEmpty && ReferenceEquals(_buffer, _disposedSentinel))
             ThrowDisposed();
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int RoundUpPow2(int v)
-    {
-        if (v <= 0)
-            return _defaultCapacity;
-
-        uint x = (uint)(v - 1);
-        x |= x >> 1;
-        x |= x >> 2;
-        x |= x >> 4;
-        x |= x >> 8;
-        x |= x >> 16;
-        x++;
-
-        const uint max = 0x3FFFFFE0; // approx Array.MaxLength for char[]
-        if (x > max)
-            return (int)max;
-
-        return (int)x;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

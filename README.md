@@ -6,7 +6,7 @@
 # ![](https://user-images.githubusercontent.com/4441470/224455560-91ed3ee7-f510-4041-a8d2-3fc093025112.png) Soenneker.Utils.PooledStringBuilders
 
 **Tiny, fast `ref struct` string builder.**
-Backed by `ArrayPool<char>`. Low allocations. Short-lived use.
+Uses caller-provided storage or `ArrayPool<char>`. Low allocations. Short-lived use.
 
 ## Installation
 
@@ -44,6 +44,7 @@ string result = sb.ToStringAndDispose();
 ## Cheatsheet
 
 - `new PooledStringBuilder(int capacity = 128)`
+- `new PooledStringBuilder(Span<char> initialBuffer)` — use stack or caller-owned memory until growth is needed
 - `Append(char)`, `Append(string?)`, `Append(ReadOnlySpan<char>)`
 - `Append<T>(T value, ReadOnlySpan<char> format = default, IFormatProvider? provider = null)` where `T : ISpanFormattable`
 - `AppendSpan(int length)` — reserve and write directly into the buffer
@@ -61,5 +62,40 @@ string result = sb.ToStringAndDispose();
 - `AppendSpan(length)` immediately increases `Length` and returns uninitialized pooled storage. Fill the entire span before reading or converting the builder, or previous pool contents could appear in the result.
 - `AsSpan()` is valid only until the builder grows, changes, or is disposed. Do not retain it.
 - `AppendLine` appends `\n`, not `Environment.NewLine`.
-- `Clear()` resets the logical length but does not zero the array. Use `Dispose(clear: true)` or `ToStringAndDispose(clear: true)` when the pooled buffer contained secrets. The returned managed string is still immutable and cannot be securely erased.
+- Reading an empty default builder with `AsSpan()`, `ToString()`, or `ToStringAndDispose()` does not rent a buffer. A large first append rents its required capacity directly.
+- Integer appends reuse the remaining space when the value fits, even if the type's maximum width would not fit. Generic formatting uses all remaining buffer space before growing.
+- `Append(ReadOnlySpan<char>)` and `AppendLine(ReadOnlySpan<char>)` accept scoped spans, including temporary stack-allocated buffers, and copy their contents immediately.
+- `Clear()` resets the logical length without zeroing storage. `Dispose(clear: true)` and `ToStringAndDispose(clear: true)` clear the current storage, including caller-provided memory if it is still in use. Earlier storage released during growth is not cleared. The returned managed string is immutable.
 - The builder is not thread-safe. Keep it short-lived and confined to one synchronous scope.
+
+## Avoiding buffer rentals
+
+For small results with a predictable upper bound, provide a modest stack buffer:
+
+```csharp
+Span<char> initialBuffer = stackalloc char[128];
+using var sb = new PooledStringBuilder(initialBuffer);
+sb.Append("item=");
+sb.Append(id);
+
+ReadOnlySpan<char> contents = sb.AsSpan(); // consume before the builder is modified or disposed
+```
+
+This path does not rent or allocate a character buffer when the contents fit. If the contents outgrow
+the supplied storage, the builder copies them into a pooled array. `ToString()` still creates the final
+nonempty string; consume `AsSpan()` when a string is unnecessary. The initial storage must remain valid
+for the builder's lifetime, and the caller retains ownership of it. Avoid large or repeated stack
+allocations inside loops; allocate a modest initial buffer outside the loop and reuse it.
+
+## Benchmarks
+
+The [benchmark project](benchmarks/Soenneker.Utils.PooledStringBuilders.Benchmarks) compares rented and
+stack-backed construction with direct span, `TryFormat`, and known-length `string.Create` controls.
+Those controls have fewer responsibilities than a general-purpose builder and show the remaining overhead.
+
+```bash
+dotnet run --project benchmarks/Soenneker.Utils.PooledStringBuilders.Benchmarks -c Release -f net10.0 -- --filter "*" --runtimes net10.0
+```
+
+Use `net8.0` or `net9.0` for the other supported runtimes. Compare results on the same runtime and machine;
+buffer sizes, formatting distributions, growth, and whether the result needs to be a string all affect performance.

@@ -1,20 +1,12 @@
 using System;
+using System.Buffers;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 
 namespace Soenneker.Utils.PooledStringBuilders;
 
-/// <summary>
-/// Represents the pooled string builder structure.
-/// </summary>
 public ref partial struct PooledStringBuilder
 {
-    // Conservative max lengths for numeric types (no separators)
-    private const int _int32MaxChars = 11;  // -2147483648
-    private const int _uInt32MaxChars = 10; // 4294967295
-    private const int _int64MaxChars = 20;  // -9223372036854775808
-    private const int _uInt64MaxChars = 20; // 18446744073709551615
-
     /// <summary>
     /// Appends space for the specified number of characters and returns a span for writing.
     /// </summary>
@@ -29,19 +21,21 @@ public ref partial struct PooledStringBuilder
             return Span<char>.Empty;
         }
 
-        char[] buf = GetBufferOrInit();
-
         int oldPos = _pos;
-        int newPos = oldPos + length;
+        Span<char> buf = _chars;
 
-        if ((uint)newPos > (uint)buf.Length)
+        if (length > buf.Length - oldPos)
         {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!; // updated by EnsureCapacityCore
+            if (buf.IsEmpty)
+                Initialize(length);
+            else
+                Grow(checked(oldPos + length));
+            buf = _chars;
         }
 
-        _pos = newPos;
-        return buf.AsSpan(oldPos, length);
+        Span<char> result = buf.Slice(oldPos, length);
+        _pos = oldPos + length;
+        return result;
     }
 
     /// <summary>
@@ -51,19 +45,19 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(char c)
     {
-        char[] buf = GetBufferOrInit();
-
+        Span<char> buf = _chars;
         int i = _pos;
         if ((uint)i >= (uint)buf.Length)
         {
-            EnsureCapacityCore(buf, i + 1);
-            buf = _buffer!;
+            if (buf.IsEmpty)
+                Initialize(_defaultCapacity);
+            else
+                Grow(i + 1);
+            buf = _chars;
         }
-
         buf[i] = c;
         _pos = i + 1;
     }
-
     /// <summary>
     /// Appends a string. Does nothing if the value is null or empty.
     /// </summary>
@@ -71,25 +65,7 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(string? value)
     {
-        if (string.IsNullOrEmpty(value))
-        {
-            ThrowIfDisposed(); // match: disposed still throws even if no-op
-            return;
-        }
-
-        char[] buf = GetBufferOrInit();
-
-        int len = value.Length;
-        int newPos = _pos + len;
-
-        if ((uint)newPos > (uint)buf.Length)
-        {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
-        }
-
-        value.AsSpan().CopyTo(buf.AsSpan(_pos));
-        _pos = newPos;
+        Append(value.AsSpan());
     }
 
     /// <summary>
@@ -97,7 +73,7 @@ public ref partial struct PooledStringBuilder
     /// </summary>
     /// <param name="value">The span of characters to append.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Append(ReadOnlySpan<char> value)
+    public void Append(scoped ReadOnlySpan<char> value)
     {
         if (value.Length == 0)
         {
@@ -105,19 +81,25 @@ public ref partial struct PooledStringBuilder
             return;
         }
 
-        char[] buf = GetBufferOrInit();
-
         int len = value.Length;
-        int newPos = _pos + len;
+        Span<char> buf = _chars;
 
-        if ((uint)newPos > (uint)buf.Length)
+        if (len > buf.Length - _pos)
         {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
+            if (buf.IsEmpty)
+            {
+                Initialize(len);
+                buf = _chars;
+            }
+            else
+            {
+                GrowAndAppend(value, appendNewline: false);
+                return;
+            }
         }
 
-        value.CopyTo(buf.AsSpan(_pos));
-        _pos = newPos;
+        value.CopyTo(buf.Slice(_pos));
+        _pos += len;
     }
 
     /// <summary>
@@ -128,20 +110,9 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(char c1, char c2)
     {
-        char[] buf = GetBufferOrInit();
-
-        int oldPos = _pos;
-        int newPos = oldPos + 2;
-
-        if ((uint)newPos > (uint)buf.Length)
-        {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
-        }
-
-        buf[oldPos] = c1;
-        buf[oldPos + 1] = c2;
-        _pos = newPos;
+        Span<char> destination = AppendSpan(2);
+        destination[0] = c1;
+        destination[1] = c2;
     }
 
     /// <summary>
@@ -153,21 +124,10 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(char c1, char c2, char c3)
     {
-        char[] buf = GetBufferOrInit();
-
-        int oldPos = _pos;
-        int newPos = oldPos + 3;
-
-        if ((uint)newPos > (uint)buf.Length)
-        {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
-        }
-
-        buf[oldPos] = c1;
-        buf[oldPos + 1] = c2;
-        buf[oldPos + 2] = c3;
-        _pos = newPos;
+        Span<char> destination = AppendSpan(3);
+        destination[0] = c1;
+        destination[1] = c2;
+        destination[2] = c3;
     }
 
     /// <summary>
@@ -184,19 +144,20 @@ public ref partial struct PooledStringBuilder
             return;
         }
 
-        char[] buf = GetBufferOrInit();
-
         int oldPos = _pos;
-        int newPos = oldPos + count;
+        Span<char> buf = _chars;
 
-        if ((uint)newPos > (uint)buf.Length)
+        if (count > buf.Length - oldPos)
         {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
+            if (buf.IsEmpty)
+                Initialize(count);
+            else
+                Grow(checked(oldPos + count));
+            buf = _chars;
         }
 
-        buf.AsSpan(oldPos, count).Fill(c);
-        _pos = newPos;
+        buf.Slice(oldPos, count).Fill(c);
+        _pos = oldPos + count;
     }
 
     /// <summary>
@@ -206,22 +167,9 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(int value)
     {
-        char[] buf = GetBufferOrInit();
-        int oldPos = _pos;
-        int newPos = oldPos + _int32MaxChars;
-
-        if ((uint)newPos > (uint)buf.Length)
-        {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
-        }
-
-        Span<char> dest = buf.AsSpan(oldPos, _int32MaxChars);
-
-        if (!value.TryFormat(dest, out int written, provider: CultureInfo.InvariantCulture))
-            ThrowUnreachable();
-
-        _pos = oldPos + written;
+        Span<char> buf = GetIntegerBuffer((long)value, 11);
+        value.TryFormat(buf.Slice(_pos), out int written, provider: CultureInfo.InvariantCulture);
+        _pos += written;
     }
 
     /// <summary>
@@ -231,22 +179,9 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(uint value)
     {
-        char[] buf = GetBufferOrInit();
-        int oldPos = _pos;
-        int newPos = oldPos + _uInt32MaxChars;
-
-        if ((uint)newPos > (uint)buf.Length)
-        {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
-        }
-
-        Span<char> dest = buf.AsSpan(oldPos, _uInt32MaxChars);
-
-        if (!value.TryFormat(dest, out int written, provider: CultureInfo.InvariantCulture))
-            ThrowUnreachable();
-
-        _pos = oldPos + written;
+        Span<char> buf = GetIntegerBuffer((ulong)value, 10);
+        value.TryFormat(buf.Slice(_pos), out int written, provider: CultureInfo.InvariantCulture);
+        _pos += written;
     }
 
     /// <summary>
@@ -256,22 +191,9 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(long value)
     {
-        char[] buf = GetBufferOrInit();
-        int oldPos = _pos;
-        int newPos = oldPos + _int64MaxChars;
-
-        if ((uint)newPos > (uint)buf.Length)
-        {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
-        }
-
-        Span<char> dest = buf.AsSpan(oldPos, _int64MaxChars);
-
-        if (!value.TryFormat(dest, out int written, provider: CultureInfo.InvariantCulture))
-            ThrowUnreachable();
-
-        _pos = oldPos + written;
+        Span<char> buf = GetIntegerBuffer(value, 20);
+        value.TryFormat(buf.Slice(_pos), out int written, provider: CultureInfo.InvariantCulture);
+        _pos += written;
     }
 
     /// <summary>
@@ -281,23 +203,57 @@ public ref partial struct PooledStringBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(ulong value)
     {
-        char[] buf = GetBufferOrInit();
-        int oldPos = _pos;
-        int newPos = oldPos + _uInt64MaxChars;
+        Span<char> buf = GetIntegerBuffer(value, 20);
+        value.TryFormat(buf.Slice(_pos), out int written, provider: CultureInfo.InvariantCulture);
+        _pos += written;
+    }
 
-        if ((uint)newPos > (uint)buf.Length)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Span<char> GetIntegerBuffer(long value, int maxChars)
+    {
+        Span<char> buf = _chars;
+        int available = buf.Length - _pos;
+        if (available < maxChars)
         {
-            EnsureCapacityCore(buf, newPos);
-            buf = _buffer!;
+            bool negative = value < 0;
+            ulong magnitude = negative ? unchecked(0UL - (ulong)value) : (ulong)value;
+            if (!FitsInteger(magnitude, available - (negative ? 1 : 0)))
+            {
+                Grow(checked(_pos + maxChars));
+                buf = _chars;
+            }
         }
 
-        Span<char> dest = buf.AsSpan(oldPos, _uInt64MaxChars);
-
-        if (!value.TryFormat(dest, out int written, provider: CultureInfo.InvariantCulture))
-            ThrowUnreachable();
-
-        _pos = oldPos + written;
+        return buf;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Span<char> GetIntegerBuffer(ulong value, int maxChars)
+    {
+        Span<char> buf = _chars;
+        int available = buf.Length - _pos;
+        if (available < maxChars && !FitsInteger(value, available))
+        {
+            Grow(checked(_pos + maxChars));
+            buf = _chars;
+        }
+
+        return buf;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool FitsInteger(ulong magnitude, int digits) =>
+        digits > 0 && magnitude < PowersOfTen[digits];
+
+    // Embedded read-only data: checking a short destination does not allocate or format twice.
+    private static ReadOnlySpan<ulong> PowersOfTen =>
+    [
+        1UL, 10UL, 100UL, 1000UL, 10000UL, 100000UL, 1000000UL, 10000000UL,
+        100000000UL, 1000000000UL, 10000000000UL, 100000000000UL,
+        1000000000000UL, 10000000000000UL, 100000000000000UL,
+        1000000000000000UL, 10000000000000000UL, 100000000000000000UL,
+        1000000000000000000UL, 10000000000000000000UL
+    ];
 
     /// <summary>
     /// Appends the string representation of a span-formattable value.
@@ -307,31 +263,57 @@ public ref partial struct PooledStringBuilder
     /// <param name="format">The format to use.</param>
     /// <param name="provider">The format provider. Can be null for default formatting.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Append<T>(T value, ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
+    public void Append<T>(T value, scoped ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
         where T : ISpanFormattable
     {
-        char[] buf = GetBufferOrInit();
+        Span<char> buf = _chars;
+        if (buf.IsEmpty)
+            ThrowIfDisposed();
 
-        int hint = 32;
+        if (value.TryFormat(buf.Slice(_pos), out int written, format, provider))
+        {
+            _pos += written;
+            return;
+        }
+
+        AppendFormattedSlow(value, format, provider);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AppendFormattedSlow<T>(T value, scoped ReadOnlySpan<char> format, IFormatProvider? provider)
+        where T : ISpanFormattable
+    {
+        if (!format.IsEmpty && format.Overlaps(_chars))
+        {
+            // Growth returns the old array, so an aliased format must survive independently.
+            char[]? rented = null;
+            Span<char> copy = format.Length <= 256 ? stackalloc char[format.Length] : (rented = ArrayPool<char>.Shared.Rent(format.Length));
+            try
+            {
+                format.CopyTo(copy);
+                AppendFormattedSlow(value, copy.Slice(0, format.Length), provider);
+            }
+            finally
+            {
+                if (rented is not null)
+                    ArrayPool<char>.Shared.Return(rented);
+            }
+
+            return;
+        }
 
         while (true)
         {
-            int required = _pos + hint;
-            if ((uint)required > (uint)buf.Length)
-            {
-                EnsureCapacityCore(buf, required);
-                buf = _buffer!;
-            }
-
-            Span<char> dest = buf.AsSpan(_pos, hint);
-
-            if (value.TryFormat(dest, out int written, format, provider))
+            Span<char> buf = _chars;
+            int required = _buffer is null ? checked(buf.Length + 1) : (int)Math.Min((long)buf.Length * 2, Array.MaxLength);
+            if (required <= buf.Length)
+                throw new OutOfMemoryException();
+            Grow(required);
+            if (value.TryFormat(_chars.Slice(_pos), out int written, format, provider))
             {
                 _pos += written;
                 return;
             }
-
-            hint <<= 1;
         }
     }
 
@@ -346,32 +328,41 @@ public ref partial struct PooledStringBuilder
     /// </summary>
     /// <param name="c">The character to append.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void AppendLine(char c)
-    {
-        Append(c);
-        Append('\n');
-    }
+    public void AppendLine(char c) => Append(c, '\n');
 
     /// <summary>
     /// Appends a string followed by a newline.
     /// </summary>
     /// <param name="value">The string to append.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void AppendLine(string? value)
-    {
-        Append(value);
-        Append('\n');
-    }
+    public void AppendLine(string? value) => AppendLine(value.AsSpan());
 
     /// <summary>
     /// Appends the characters from a span followed by a newline.
     /// </summary>
     /// <param name="value">The span of characters to append.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void AppendLine(ReadOnlySpan<char> value)
+    public void AppendLine(scoped ReadOnlySpan<char> value)
     {
-        Append(value);
-        Append('\n');
+        Span<char> buf = _chars;
+        if (value.Length >= buf.Length - _pos)
+        {
+            if (buf.IsEmpty)
+            {
+                Initialize(checked(value.Length + 1));
+                buf = _chars;
+            }
+            else
+            {
+                GrowAndAppend(value, appendNewline: true);
+                return;
+            }
+        }
+
+        value.CopyTo(buf.Slice(_pos));
+        int newPos = _pos + value.Length + 1;
+        buf[newPos - 1] = '\n';
+        _pos = newPos;
     }
 
     /// <summary>
@@ -382,7 +373,7 @@ public ref partial struct PooledStringBuilder
     /// <param name="format">The format to use.</param>
     /// <param name="provider">The format provider. Can be null for default formatting.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void AppendLine<T>(T value, ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
+    public void AppendLine<T>(T value, scoped ReadOnlySpan<char> format = default, IFormatProvider? provider = null)
         where T : ISpanFormattable
     {
         Append(value, format, provider);
@@ -401,7 +392,23 @@ public ref partial struct PooledStringBuilder
             Append(separator);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void GrowAndAppend(scoped ReadOnlySpan<char> value, bool appendNewline)
+    {
+        int newPos = checked(_pos + value.Length + (appendNewline ? 1 : 0));
+        char[] buffer = GrowAndAppendCore(_chars.Slice(0, _pos), value, appendNewline, newPos, _chars.Length, _buffer);
+        ReplaceBuffer(buffer);
+        _pos = newPos;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ThrowUnreachable() =>
-        throw new InvalidOperationException("Unexpected TryFormat failure.");
+    private static char[] GrowAndAppendCore(ReadOnlySpan<char> contents, ReadOnlySpan<char> value, bool appendNewline, int required, int capacity, char[]? previous)
+    {
+        char[] buffer = RentBuffer(required, capacity, previous);
+        contents.CopyTo(buffer);
+        value.CopyTo(buffer.AsSpan(contents.Length));
+        if (appendNewline)
+            buffer[required - 1] = '\n';
+        return buffer;
+    }
 }
